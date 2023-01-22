@@ -181,7 +181,7 @@ search_anime() {
 
 # get the episodes list of the selected anime
 episodes_list() {
-	wget -q -O - "https://allanime.site/anime/$*" -U "$agent" | sed 's|\\||g' | sed -nE "s|.*$mode\":\[([0-9.\",]*)\].*|\1|p" | sed 's|,|\n|g; s|"||g'
+	wget2 -q -O - "https://allanime.site/anime/$*" -U "$agent" | sed 's|\\||g' | sed -nE "s|.*$mode\":\[([0-9.\",]*)\].*|\1|p" | sed 's|,|\n|g; s|"||g'
 }
 
 # PLAYING
@@ -291,7 +291,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 printf "\33[2K\r\033[1;34mChecking dependencies...\033[0m\n"
-dep_ch "wget" "sed" "grep" "fzf" || true
+dep_ch "wget2" "sed" "grep" "fzf" || true
 case "$player_function" in
 debug) ;;
 download) dep_ch "ffmpeg" "aria2c" ;;
