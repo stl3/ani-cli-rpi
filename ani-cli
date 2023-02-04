@@ -1,6 +1,6 @@
 #!/bin/sh
 
-version_number="4.0.3"
+version_number="4.0.5"
 
 # UI
 
@@ -43,6 +43,8 @@ help_info() {
         Continue watching from history
       -d, --download
         Download the video instead of playing it
+      -D, --delete
+        Delete history
       -s, --syncplay
         Use Syncplay to watch with friends
       -q, --quality
@@ -204,7 +206,7 @@ update_history() {
 download() {
 	case $1 in
 	*m3u8*) ffmpeg -loglevel error -stats -i "$1" -c copy "$download_dir/$2.mp4" ;;
-	*) aria2c --check-certificate=false --summary-interval=0 -x 16 -s 16 "$1" --dir="$download_dir" -o "$2.mp4" --download-result=hide ;;
+	*) aria2c --check-certificate=false --continue --summary-interval=0 -x 16 -s 16 "$1" --dir="$download_dir" -o "$2.mp4" --download-result=hide ;;
 	esac
 }
 
@@ -252,8 +254,7 @@ play() {
 # MAIN
 
 # setup
-firefox_version=$(shuf -i '106-109' -n1)
-agent="Mozilla/5.0 (X11; Linux x86_64; rv:${firefox_version}.0) Gecko/20100101 Firefox/${firefox_version}.0"
+agent="Mozilla/5.0 (Windows NT 6.1; Win64; rv:109.0) Gecko/20100101 Firefox/109.0"
 mode="${ANI_CLI_MODE:-sub}"
 download_dir="${ANI_CLI_DOWNLOAD_DIR:-.}"
 quality="${ANI_CLI_QUALITY:-best}"
@@ -266,6 +267,7 @@ case "$(uname -a)" in
 esac
 
 use_external_menu="${ANI_CLI_EXTERNAL_MENU:-0}"
+[ -t 0 ] || use_external_menu=1
 [ "$use_external_menu" = "0" ] && multi_selection_flag="${ANI_CLI_MULTI_SELECTION:-"-m"}"
 [ "$use_external_menu" = "1" ] && multi_selection_flag="${ANI_CLI_MULTI_SELECTION:-"-multi-select"}"
 cache_dir="${ANI_CLI_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ani-cli}"
@@ -299,6 +301,10 @@ while [ $# -gt 0 ]; do
 		;;
 	-c | --continue) search=history ;;
 	-d | --download) player_function=download ;;
+	-D | --delete)
+		: > "$histfile"
+		exit 0
+		;;
 	-V | --version) version_info ;;
 	-h | --help) help_info ;;
 	-e | --episode | -r | --range)
@@ -347,7 +353,7 @@ history)
 		if [ "$use_external_menu" = "0" ]; then
 			printf "Search anime: " && read -r query
 		else
-			query=$(printf "" | external_menu "Search anime: ")
+			query=$(: | external_menu "" "Search anime:")
 		fi
 	done
 	query=$(printf "%s" "$query" | sed "s| |%20|g")
