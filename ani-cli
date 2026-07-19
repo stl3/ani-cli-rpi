@@ -233,6 +233,52 @@ select_quality() {
     episode=$(printf "%s" "$result" | cut -d'>' -f2)
 }
 
+# fetch crypto key from mkissa.to
+get_crypto() {
+    [ -f "$AA_CRYPTO_CACHE" ] && . "$AA_CRYPTO_CACHE"
+    [ -n "$AA_CRYPTO_TIME" ] && [ $(( $(date +%s) - AA_CRYPTO_TIME )) -lt $AA_CRYPTO_STALE ] && allanime_key="$AA_CRYPTO_KEY" && return
+
+    _tmp=$(mktemp)
+    _html=$(curl -sL -D "$_tmp" "https://mkissa.to/" -A "$agent")
+    _headers=$(tr -d '\r' < "$_tmp")
+    rm -f "$_tmp"
+
+    _crypto=$(printf '%s' "$_html" | sed -nE 's/.*window\.__aaCrypto[[:space:]]*=[[:space:]]*(\{[^;]+\});.*/\1/p')
+    [ -z "$_crypto" ] && die "no __aaCrypto in mkissa.to response"
+    _epoch=$(printf '%s' "$_crypto" | sed -nE 's/.*"epoch"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')
+    _partB=$(printf '%s' "$_crypto" | sed -nE 's/.*"partB"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')
+    [ -z "$_epoch" ] || [ -z "$_partB" ] && die "failed to extract epoch/partB"
+
+    _chunks=$(printf '%s' "$_headers" | tr ',' '\n' | sed -nE 's/.*<([^>]+)>; rel="modulepreload".*/\1/p')
+    [ -z "$_chunks" ] && _chunks=$(printf '%s' "$_html" | sed -nE 's/.*rel="modulepreload".*href="([^"]+\.js)".*/\1/p')
+    [ -z "$_chunks" ] && die "no modulepreload chunks found"
+
+    for _chunk in $_chunks; do
+        _data=$(curl -sL --max-time 15 "$_chunk" -A "$agent" | dd bs=1024 count=512 2>/dev/null)
+        [ -z "$_data" ] && continue
+        _mask=$(printf '%s' "$_data" | sed -nE 's/.*bd="([a-f0-9]{64})".*/\1/p' | head -1)
+        [ -n "$_mask" ] && break
+    done
+    [ -z "$_mask" ] && die "failed to find crypto mask in chunks"
+
+    _b64=$(printf '%s' "$_partB" | tr -- '-_' '+/')
+    _partB_hex=$(printf '%s' "$_b64" | base64 -d | od -A n -t x1 | tr -d ' \n')
+    _key=""
+    _i=0
+    while [ $_i -lt 64 ]; do
+        _xor=$((0x${_mask:$_i:2} ^ 0x${_partB_hex:$_i:2}))
+        _key="${_key}$(printf '%02x' "$_xor")"
+        _i=$((_i + 2))
+    done
+
+    mkdir -p "$(dirname "$AA_CRYPTO_CACHE")"
+    printf 'AA_CRYPTO_EPOCH=%s\nAA_CRYPTO_KEY=%s\nAA_CRYPTO_TIME=%s\n' \
+        "$_epoch" "$_key" "$(date +%s)" > "$AA_CRYPTO_CACHE"
+    allanime_key="$_key"
+    AA_CRYPTO_EPOCH="$_epoch"
+}
+
+
 process_response() {
     if ! printf '%s' "$1" | grep -q '"tobeparsed"'; then
         printf '%s' "$1"
@@ -297,8 +343,8 @@ get_episode_url() {
     query_hash="d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
     query_vars="{\"showId\":\"$id\",\"translationType\":\"$mode\",\"episodeString\":\"$ep_no\"}"
     query_ext="{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"$query_hash\"}}"
-
-    api_resp="$(curl -e "$allanime_refr" -sG -A "$agent" -H "Origin: ${allanime_refr}" "${allanime_api}/api" --data-urlencode "variables=${query_vars}" --data-urlencode "extensions=${query_ext}")"
+    _aa_ext=$(python3 "$script_dir/gen_ext.py" "$allanime_key" "$AA_CRYPTO_EPOCH" "9" "$query_hash")
+    api_resp="$(curl -e "$allanime_refr" -sG -A "$agent" -H "Origin: ${allanime_refr}" "${allanime_api}/api" --data-urlencode "variables=${query_vars}" --data-urlencode "extensions=${_aa_ext}")"
 
     if [ -z "$api_resp" ] || ! printf "%s" "$api_resp" | grep -q "tobeparsed"; then
         api_resp="$(curl -e "$allanime_refr" -s -H "Content-Type: application/json" -X POST "${allanime_api}/api" --data "{\"variables\":{\"showId\":\"$id\",\"translationType\":\"$mode\",\"episodeString\":\"$ep_no\"},\"query\":\"$episode_embed_gql\"}" -A "$agent")"
@@ -487,7 +533,10 @@ agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefo
 allanime_refr="https://youtu-chan.com"
 allanime_base="allanime.day"
 allanime_api="https://api.${allanime_base}"
-allanime_key="$(printf '%s' 'Xot36i3lK3:v1' | openssl dgst -sha256 -binary | od -A n -t x1 | tr -d ' \n')"
+AA_CRYPTO_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/ani-cli/aa_crypto"
+AA_CRYPTO_STALE=3600
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+get_crypto
 mode="${ANI_CLI_MODE:-sub}"
 download_dir="${ANI_CLI_DOWNLOAD_DIR:-.}"
 log_episode="${ANI_CLI_LOG:-1}"
