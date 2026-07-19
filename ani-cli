@@ -343,7 +343,17 @@ get_episode_url() {
     query_hash="d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec"
     query_vars="{\"showId\":\"$id\",\"translationType\":\"$mode\",\"episodeString\":\"$ep_no\"}"
     query_ext="{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"$query_hash\"}}"
-    _aa_ext=$(python3 "$script_dir/gen_ext.py" "$allanime_key" "$AA_CRYPTO_EPOCH" "9" "$query_hash")
+    _aa_ext=$(python3 -c "
+import hashlib,json,base64,time
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+k,e,b,q='$allanime_key','$AA_CRYPTO_EPOCH','9','$query_hash'
+ts=int(time.time()*1000)//300000*300000
+iv=hashlib.sha256(f'{e}:{b}:{q}:{ts}'.encode()).digest()[:12]
+p=json.dumps({'v':1,'ts':ts,'epoch':int(e),'buildId':b,'qh':q}).encode()
+t=b'\\x01'+iv+AESGCM(bytes.fromhex(k)).encrypt(iv,p,None)
+ext={'persistedQuery':{'version':1,'sha256Hash':q},'aaReq':base64.b64encode(t).decode()}
+print(json.dumps(ext,separators=(',',':')))")
+
     api_resp="$(curl -e "$allanime_refr" -sG -A "$agent" -H "Origin: ${allanime_refr}" "${allanime_api}/api" --data-urlencode "variables=${query_vars}" --data-urlencode "extensions=${_aa_ext}")"
 
     if [ -z "$api_resp" ] || ! printf "%s" "$api_resp" | grep -q "tobeparsed"; then
